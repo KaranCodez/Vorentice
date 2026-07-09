@@ -1,0 +1,116 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f3f6f5;
+  --foreground: #0c1815;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  /* Vorentice design tokens */
+  --color-ink: #0c1815;
+  --color-soft: #64766f;
+  --color-faint: #93a39d;
+  --color-line: #dde6e3;
+  --color-card: #fcfefd;
+  --color-mint: #e2f3ef;
+  --color-void: #070c0b;
+  --color-accent: #0d9488;
+  --color-accent-bright: #2dd4bf;
+  --color-flow: #5eb8ac;
+  --color-ok: #10b981;
+  --color-warn: #d97706;
+  --color-alarm: #dc2626;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow-x: clip;
+}
+
+::selection {
+  background: rgba(20, 184, 166, 0.25);
+}
+
+/* ————— keyframes ————— */
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.55);
+    opacity: 0.85;
+  }
+  75% {
+    opacity: 0;
+  }
+  100% {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+
+@keyframes dash-flow {
+  to {
+    stroke-dashoffset: -120;
+  }
+}
+
+@keyframes marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes blink-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* ————— component helpers ————— */
+
+.route-flow {
+  stroke-dasharray: 2.5 9;
+  animation: dash-flow 3.2s linear infinite;
+}
+
+.route-flow-slow {
+  stroke-dasharray: 2.5 11;
+  animation: dash-flow 5.5s linear infinite;
+}
+
+.pulse-ring {
+  animation: pulse-ring 2.6s cubic-bezier(0.2, 0.6, 0.4, 1) infinite;
+}
+
+.live-dot {
+  animation: blink-soft 1.9s ease-in-out infinite;
+}
+
+.ticker-track {
+  animation: marquee 52s linear infinite;
+}
+
+.ticker-viewport:hover .ticker-track {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-flow,
+  .route-flow-slow,
+  .pulse-ring,
+  .live-dot,
+  .ticker-track {
+    animation: none !important;
+  }
+}
