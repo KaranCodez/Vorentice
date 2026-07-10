@@ -28,7 +28,7 @@ export default function Navbar({ ready }: { ready: boolean }) {
       transition={{ duration: 0.8, delay: 0.35, ease: EASE_OUT }}
       className="relative z-20 mx-auto flex h-12 w-full max-w-[1160px] items-center justify-between"
     >
-      <div className="flex items-center gap-2 text-sm font-bold tracking-[0.12em] text-ink">
+      <div className="font-wordmark flex items-center gap-2 text-[15px] font-extrabold tracking-[0.08em] text-ink">
         <span className="inline-block size-2 rounded-full bg-accent shadow-[0_0_10px_rgba(13,148,136,0.8)]" />
         VORENTICE
       </div>

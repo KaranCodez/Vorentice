@@ -82,7 +82,7 @@ export default function Preloader({ onDone }: { onDone: () => void }) {
       {/* wordmark */}
       <div
         aria-label="VORENTICE"
-        className="flex items-center overflow-hidden px-4 text-[clamp(44px,9vw,118px)] font-black leading-none tracking-[-0.02em]"
+        className="font-wordmark flex items-center overflow-hidden px-4 text-[clamp(44px,9vw,112px)] font-extrabold leading-none tracking-[0.005em]"
       >
         {WORD.map((ch, i) => {
           const revealed = progress >= ((i + 1) / WORD.length) * 92;

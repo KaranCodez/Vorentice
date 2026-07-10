@@ -10,6 +10,7 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  --font-wordmark: var(--font-exo2);
 
   /* Vorentice design tokens */
   --color-ink: #0c1815;
