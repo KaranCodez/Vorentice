@@ -35,14 +35,29 @@ _QUERY_SPACING_SECONDS = 3.0
 _RATE_LIMIT_COOLDOWN_SECONDS = 5.0
 _MAX_COOLDOWN_SECONDS = 8.0
 
-# Standing queries — the agent's "watch list". Reviewed by humans.
+# Standing queries — the agent's "watch list", one per news segment.
+# Reviewed by humans; covers ALL monitored domains (wars, oil markets,
+# weather, ports, sanctions, military incidents), not any single route.
 # GDELT syntax: quoted phrases, OR groups in parens, near:N proximity.
 DEFAULT_QUERIES: tuple[str, ...] = (
-    '"crude oil" (India OR OPEC OR sanctions OR disruption)',
-    '("Strait of Hormuz" OR "Suez Canal" OR "Bab el-Mandeb" OR "Strait of Malacca") (oil OR tanker OR shipping)',
-    '(tanker OR pipeline) (attack OR seized OR explosion OR blockade)',
+    # Energy markets
+    '"crude oil" (India OR OPEC OR disruption OR outage OR shortage)',
     '"oil price" (surge OR spike OR crash OR shock)',
-    '(India) ("oil import" OR "petroleum" OR "strategic reserve" OR refinery)',
+    # Routes & chokepoints
+    '("Strait of Hormuz" OR "Suez Canal" OR "Bab el-Mandeb" OR "Strait of Malacca" OR "Panama Canal") (blocked OR closed OR disruption OR attack OR shipping)',
+    # Military & security incidents
+    '(tanker OR pipeline OR "oil terminal" OR refinery) (attack OR missile OR drone OR seized OR explosion OR sabotage)',
+    '(piracy OR hijacking OR "vessel seized") (shipping OR tanker OR cargo)',
+    # Ports & shipping operations
+    '(port OR terminal) (closure OR closed OR strike OR congestion OR shutdown) (shipping OR cargo OR container OR tanker)',
+    # Wars & geopolitics
+    '(war OR invasion OR escalation OR ceasefire) (oil OR shipping OR "supply chain" OR trade)',
+    # Sanctions & trade restrictions
+    '(sanctions OR embargo OR "export ban") (oil OR crude OR tanker OR shipping OR energy)',
+    # Weather affecting logistics
+    '(cyclone OR hurricane OR typhoon) (port OR shipping OR oil OR refinery OR evacuat)',
+    # India-specific supply security
+    '(India) ("oil import" OR petroleum OR "strategic reserve" OR refinery OR port)',
 )
 
 

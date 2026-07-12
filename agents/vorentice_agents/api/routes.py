@@ -18,7 +18,14 @@ from vorentice_agents.api.schemas import (
     AgentRunOut,
     AlertOut,
     NewsItemOut,
+    SegmentBriefingOut,
     TriggerResponse,
+)
+from vorentice_agents.domain.enums import (
+    SEGMENT_LABELS,
+    SEVERITY_ORDER,
+    NewsSegment,
+    segment_of,
 )
 from vorentice_agents.persistence.repository import NewsRepository
 from vorentice_agents.persistence.tables import NewsItemRow
@@ -88,6 +95,63 @@ async def runs(request: Request) -> list[AgentRunOut]:
         )
         for row in repository.recent_runs()
     ]
+
+
+@router.get("/news/briefing", response_model=list[SegmentBriefingOut])
+async def briefing(
+    request: Request,
+    hours: int = Query(default=24, ge=1, le=168),
+    min_severity: str = Query(default="high"),
+) -> list[SegmentBriefingOut]:
+    """The operator briefing: latest developments grouped by monitored
+    segment (energy, weather, sanctions, ports, routes, war, security).
+
+    Every significant event in every segment is surfaced with its
+    criticality level — 2 war criticals + 3 severe weather events + 2
+    port closures = 7 entries across 3 segments, not one headline item.
+    """
+    repository: NewsRepository = request.app.state.repository
+    floor = SEVERITY_ORDER.get(min_severity, SEVERITY_ORDER["high"])
+
+    grouped: dict[NewsSegment, list[NewsItemRow]] = {}
+    counts: dict[NewsSegment, dict[str, int]] = {}
+    for row in repository.briefing_items(hours=hours):
+        segment = segment_of(row.impact_category)
+        counts.setdefault(segment, {})[row.severity] = (
+            counts.setdefault(segment, {}).get(row.severity, 0) + 1
+        )
+        if SEVERITY_ORDER.get(row.severity, 0) >= floor:
+            grouped.setdefault(segment, []).append(row)
+
+    briefing_out: list[SegmentBriefingOut] = []
+    for segment in NewsSegment:
+        events = grouped.get(segment, [])
+        if not events and segment not in counts:
+            continue  # nothing at all in this segment this window
+        events.sort(
+            key=lambda r: (SEVERITY_ORDER.get(r.severity, 0), r.fetched_at),
+            reverse=True,
+        )
+        briefing_out.append(
+            SegmentBriefingOut(
+                segment=segment.value,
+                label=SEGMENT_LABELS[segment],
+                counts=counts.get(segment, {}),
+                events=[_to_out(row) for row in events],
+            )
+        )
+    # Hottest segments first: by their single most severe event, then volume.
+    briefing_out.sort(
+        key=lambda s: (
+            max(
+                (SEVERITY_ORDER.get(e.severity, 0) for e in s.events),
+                default=-1,
+            ),
+            sum(s.counts.values()),
+        ),
+        reverse=True,
+    )
+    return briefing_out
 
 
 @router.get("/news/sources")

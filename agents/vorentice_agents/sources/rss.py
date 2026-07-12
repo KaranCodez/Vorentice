@@ -7,7 +7,7 @@ large feeds.
 """
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 
 import feedparser
@@ -18,12 +18,28 @@ from vorentice_agents.sources.base import NewsSource, SourceError, USER_AGENT
 
 
 class RssSource(NewsSource):
-    """Fetches and normalizes a single RSS/Atom feed."""
+    """Fetches and normalizes a single RSS/Atom feed.
 
-    def __init__(self, name: str, feed_url: str, max_entries: int = 50) -> None:
+    `publisher_per_entry` is for aggregator feeds (Google News): each
+    entry names its true publisher in the <source> tag, so articles get
+    source_name "feed:Publisher". Without this, every aggregated outlet
+    would collapse into one source and corroboration independence checks
+    would wrongly treat BBC and Reuters as the same voice.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        feed_url: str,
+        max_entries: int = 50,
+        publisher_per_entry: bool = False,
+        max_age_days: int = 7,
+    ) -> None:
         self.name = name
         self._feed_url = feed_url
         self._max_entries = max_entries
+        self._publisher_per_entry = publisher_per_entry
+        self._max_age_days = max_age_days
 
     async def fetch(self, client: httpx.AsyncClient) -> list[RawArticle]:
         try:
@@ -41,22 +57,53 @@ class RssSource(NewsSource):
         if parsed.bozo and not parsed.entries:
             raise SourceError(self.name, f"unparseable feed: {parsed.bozo_exception}")
 
+        # Freshness gate — search-based aggregator feeds (Google News)
+        # can return YEARS-old articles; an intelligence feed must never
+        # present the 2021 Suez blockage as breaking news. Entries with
+        # no parseable date are kept (regular feeds are current by nature).
+        cutoff = datetime.now(timezone.utc) - timedelta(days=self._max_age_days)
+
         articles = []
         for entry in parsed.entries[: self._max_entries]:
             url = getattr(entry, "link", "").strip()
             title = getattr(entry, "title", "").strip()
             if not url or not title:
                 continue
+
+            published_at = _entry_datetime(entry)
+            if published_at is not None and published_at < cutoff:
+                continue  # stale — historical result, not news
+
+            source_name = self.name
+            if self._publisher_per_entry:
+                publisher = _entry_publisher(entry)
+                if publisher:
+                    source_name = f"{self.name}:{publisher}"
+                    # Aggregators suffix headlines with " - Publisher";
+                    # strip it so titles dedup/compare cleanly.
+                    suffix = f" - {publisher}"
+                    if title.endswith(suffix):
+                        title = title[: -len(suffix)].rstrip()
+
             articles.append(
                 RawArticle(
                     url=url,
                     title=title,
-                    source_name=self.name,
-                    published_at=_entry_datetime(entry),
+                    source_name=source_name,
+                    published_at=published_at,
                     snippet=getattr(entry, "summary", "")[:500],
                 )
             )
         return articles
+
+
+def _entry_publisher(entry: feedparser.FeedParserDict) -> str:
+    """True publisher of an aggregated entry (Google News <source> tag)."""
+    source = getattr(entry, "source", None)
+    if source is None:
+        return ""
+    title = source.get("title", "") if hasattr(source, "get") else ""
+    return " ".join(str(title).split())[:80]
 
 
 def _entry_datetime(entry: feedparser.FeedParserDict) -> datetime | None:

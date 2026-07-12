@@ -100,9 +100,13 @@ class FredOilPriceSignal(SignalSource):
 
 
 def _severity_for_move(pct: float) -> Severity:
+    """Aligned with the system-wide rubric: a sudden double-digit price
+    shock is a critical supply-security event."""
     magnitude = abs(pct)
     if magnitude >= 10:
-        return Severity.HIGH
+        return Severity.CRITICAL
     if magnitude >= 5:
+        return Severity.HIGH
+    if magnitude >= 2.5:
         return Severity.MEDIUM
     return Severity.LOW

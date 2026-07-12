@@ -102,6 +102,19 @@ class NewsRepository:
         )
         return rows
 
+    def briefing_items(self, hours: int = 24) -> list[NewsItemRow]:
+        """Everything fetched in the briefing window; grouping by segment
+        happens at the API layer (segments are presentation, not storage)."""
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        with open_session() as session:
+            return list(
+                session.exec(
+                    select(NewsItemRow)
+                    .where(NewsItemRow.fetched_at >= cutoff)
+                    .order_by(col(NewsItemRow.fetched_at).desc())
+                ).all()
+            )
+
     def items_since(self, item_id: int) -> list[NewsItemRow]:
         """Items newer than a known id — powers SSE incremental pushes."""
         with open_session() as session:

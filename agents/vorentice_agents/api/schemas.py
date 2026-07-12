@@ -39,6 +39,19 @@ class AgentRunOut(BaseModel):
     llm_calls: int
 
 
+class SegmentBriefingOut(BaseModel):
+    """One monitored segment's slice of the operator briefing.
+
+    No numeric risk score by design — criticality is expressed as the
+    severity level on each event; risk percentages are the Risk Agent's
+    job downstream."""
+
+    segment: str
+    label: str
+    counts: dict[str, int]      # severity -> item count in the window
+    events: list[NewsItemOut]   # most critical developments, all of them
+
+
 class AlertOut(BaseModel):
     id: int
     created_at: datetime

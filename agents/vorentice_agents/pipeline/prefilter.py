@@ -27,15 +27,44 @@ _CORE_TERMS: dict[str, float] = {
     r"\blng\b|\bnatural gas\b": 0.2,
 }
 
+# Maritime logistics — ports, shipping, canals. These matter even when
+# the article never says "oil": a closed port or blocked canal reroutes
+# crude and products all the same.
+_MARITIME_TERMS: dict[str, float] = {
+    r"\bports?\b|\bharbou?r\b|\bterminals?\b": 0.35,
+    r"\bshipping\b|\bmaritime\b|\bvessels?\b|\bfreight\b|\bcargo\b": 0.3,
+    r"\bcanal\b|\bstraits?\b": 0.4,
+    r"\bcongestion\b|\bberth": 0.3,
+    r"\brun aground\b|\bgrounding\b|\bcapsiz": 0.4,
+    r"\bvlcc\b|\bsupertanker": 0.5,
+    r"\bconvoy\b|\btransit(s|ing)?\b": 0.2,
+}
+
+# Conflict & security — wars and attacks in producer/transit regions are
+# supply events even before markets react.
+_SECURITY_TERMS: dict[str, float] = {
+    r"\bmissiles?\b|\bdrones?\b|\buav\b|\brockets?\b": 0.45,
+    r"\bpirac|\bpirates?\b|\bhijack": 0.5,
+    r"\bnavy\b|\bnaval\b|\bwarships?\b|\bfrigate": 0.35,
+    r"\binvasion\b|\boffensive\b|\bairstrikes?\b|\bshelling\b": 0.45,
+    r"\bceasefire\b|\btruce\b": 0.3,
+    r"\bterror": 0.3,
+    r"\bhouthis?\b|\bhezbollah\b": 0.5,
+    r"\bmilitar(y|ised|ized)\b": 0.2,
+}
+
 _GEO_TERMS: dict[str, float] = {
     r"\bhormuz\b": 0.7,
     r"\bmalacca\b": 0.6,
     r"\bsuez\b": 0.6,
     r"\bbab[- ]el[- ]mandeb\b|\bred sea\b": 0.5,
+    r"\bblack sea\b|\bbosporus\b": 0.4,
+    r"\bpanama\b": 0.35,
     r"\bindia\b|\bindian\b": 0.4,
     r"\bpersian gulf\b|\bmiddle east\b": 0.4,
     r"\bsaudi\b|\biraq\b|\biran\b|\buae\b|\bkuwait\b|\bqatar\b": 0.35,
     r"\brussia\b|\burals\b": 0.3,
+    r"\bukrain|\bisrael\b|\bgaza\b|\byemen\b": 0.3,
     r"\bnigeria\b|\bangola\b|\bvenezuela\b": 0.3,
 }
 
@@ -50,7 +79,13 @@ _EVENT_TERMS: dict[str, float] = {
     r"\bcyclones?\b|\bhurricanes?\b|\bstorms?\b": 0.25,
 }
 
-_ALL_VOCABULARIES = (_CORE_TERMS, _GEO_TERMS, _EVENT_TERMS)
+_ALL_VOCABULARIES = (
+    _CORE_TERMS,
+    _MARITIME_TERMS,
+    _SECURITY_TERMS,
+    _GEO_TERMS,
+    _EVENT_TERMS,
+)
 
 
 class KeywordPreFilter:

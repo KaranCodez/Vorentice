@@ -15,14 +15,27 @@ fetch ──► dedup ──► prefilter ──┬─► classify ──► per
                                       structured output)
 ```
 
+**Coverage is multi-domain by charter** — the agent monitors wars, oil
+markets, weather, ports, sanctions and military incidents worldwide, and
+groups everything into operator segments: Energy Markets · Weather ·
+Sanctions & Trade · Ports & Shipping · Routes & Chokepoints · Wars &
+Geopolitics · Military & Security. `GET /api/news/briefing` returns the
+latest significant developments per segment, each with its criticality
+level — never a numeric risk score (scoring is the Risk Agent's job).
+
 **Two source families, one feed:**
-- **Article sources** → `RawArticle`, judged by the LLM: GDELT DOC, OilPrice,
-  Oil & Gas Journal, CSIS, ET EnergyWorld, EIA Today, PIB/MoPNG. (ReliefWeb
-  ready but dormant until an approved appname is set.)
+- **Article sources** → `RawArticle`, judged by the LLM: GDELT DOC (10
+  standing queries, one per domain), OilPrice, Oil & Gas Journal, gCaptain,
+  Maritime Executive, Al Jazeera, Google News sweeps (ports & conflict,
+  true publisher attributed per entry), CSIS, ET EnergyWorld, EIA Today,
+  PIB/MoPNG. A 7-day freshness gate drops stale search results (the 2021
+  Suez story must never page as breaking news). (ReliefWeb ready but
+  dormant until an approved appname is set.)
 - **Signal sources** → `ClassifiedArticle`, judged by deterministic rules
   (no LLM, exact numbers): **EIA** crude stocks, **FRED** Brent/WTI prices,
-  **Open-Meteo** sea state at the chokepoints. Each fold into the feed as a
-  synthesized intel item (e.g. `EIA: U.S. crude stocks drew down 4.2M bbl`).
+  **Open-Meteo** sea state at the chokepoints, **OpenSanctions** newly
+  listed oil entities/tankers. Each folds into the feed as a synthesized
+  intel item (e.g. `EIA: U.S. crude stocks drew down 4.2M bbl`).
 
 **Dedup is three-layered**: exact URL hash (in-batch + store), then
 near-duplicate headline matching (token-set Jaccard). A near-dup from a
@@ -35,12 +48,14 @@ stored once.
    (EIA/FRED/Open-Meteo), an official government outlet (PIB), or already
    corroborated by ≥2 independent sources.
 2. *event corroboration* — when ≥2 independent sources file **critical**
-   reports naming the **same chokepoint** (Strait of Hormuz, Malacca…), that
-   is a real event and pages once, with provenance. This catches genuine
-   multi-source crises that headline-matching misses (different outlets
-   phrase the same crisis differently). Missing a real Hormuz event is the
-   worst failure mode for a supply-security system, so this path is
-   deliberately sensitive while still requiring source independence.
+   reports about the **same event** (same chokepoint when tagged, else same
+   segment + region), that is a real event and pages once, with provenance.
+   Multiple simultaneous crises each raise their own alert — a war
+   escalation, a canal blockage and a port shutdown happening at once
+   produce three distinct pages, never a single headline event. Missing a
+   real crisis is the worst failure mode for a supply-security system, so
+   this path is deliberately sensitive while still requiring source
+   independence.
 
 A lone LLM-classified critical from a single outlet never pages on its own —
 single-headline severity is the least trustworthy signal.
@@ -96,6 +111,7 @@ the pipeline runs end-to-end with the heuristic classifier.
 | Method | Path                | Purpose                              |
 |--------|---------------------|--------------------------------------|
 | GET    | `/api/health`       | Liveness probe                       |
+| GET    | `/api/news/briefing`| Situation briefing grouped by segment (`hours`, `min_severity`) |
 | GET    | `/api/news/latest`  | Recent items (`limit`, `min_relevance`, `severity`) |
 | GET    | `/api/news/stream`  | SSE push of newly stored items       |
 | GET    | `/api/news/alerts`  | Raised alerts with their items       |

@@ -64,10 +64,10 @@ class AlertPolicy:
 
 
 @dataclass(frozen=True)
-class ChokepointEvent:
-    """A corroborated critical situation at one chokepoint."""
+class CriticalEvent:
+    """A corroborated critical situation — in ANY monitored segment."""
 
-    chokepoint: str
+    label: str  # e.g. "Strait of Hormuz" or "Wars & Geopolitical Conflicts · middle_east"
     item_ids: tuple[int, ...]
     sources: tuple[str, ...]
     representative_id: int
@@ -75,7 +75,7 @@ class ChokepointEvent:
     @property
     def reason(self) -> str:
         return (
-            f"{self.chokepoint} event — {len(self.item_ids)} critical reports "
+            f"{self.label} event — {len(self.item_ids)} critical reports "
             f"across {len(self.sources)} independent sources "
             f"({', '.join(self.sources)})"
         )
@@ -85,39 +85,56 @@ class EventCorroborationPolicy:
     """Corroboration by *event*, not by headline wording.
 
     Different outlets rarely phrase the same crisis alike, so title
-    matching misses genuine multi-source events. But the classifier tags
-    each item with the chokepoint(s) it implicates very reliably — so we
-    corroborate on that: when >= N independent sources file CRITICAL
-    reports naming the same chokepoint, that is a real event and pages.
+    matching misses genuine multi-source events. Instead we group the
+    open critical items by what they are about and page when >= N
+    independent sources report the same thing:
 
-    This is the safety-critical path: for a supply-security system,
-    missing a genuine Hormuz crisis is far worse than a redundant page.
+    - sharpest key: a named chokepoint, when the classifier tagged one;
+    - otherwise: the (segment, region) pair — so a war escalation, a
+      port shutdown, or a cyclone corroborated across outlets pages
+      exactly like a chokepoint crisis does.
+
+    EVERY corroborated event is emitted — a war, a supply disruption and
+    two port closures happening at once produce four distinct alerts,
+    per the charter: comprehensive view, not a single headline event.
+    Missing a genuine crisis is far worse than a redundant page.
     """
 
     def __init__(self, min_sources: int = 2) -> None:
         self._min_sources = min_sources
 
-    def find_events(self, critical_items: list[NewsItemRow]) -> list[ChokepointEvent]:
-        by_chokepoint: dict[str, list[NewsItemRow]] = {}
-        for item in critical_items:
-            for choke in _chokepoints_of(item):
-                by_chokepoint.setdefault(choke, []).append(item)
+    def find_events(self, critical_items: list[NewsItemRow]) -> list[CriticalEvent]:
+        from vorentice_agents.domain.enums import SEGMENT_LABELS, segment_of
 
-        events: list[ChokepointEvent] = []
-        for choke, items in by_chokepoint.items():
-            sources = {i.source_name for i in items}
+        by_key: dict[str, list[NewsItemRow]] = {}
+        for item in critical_items:
+            chokes = _chokepoints_of(item)
+            if chokes:
+                for choke in chokes:
+                    by_key.setdefault(choke, []).append(item)
+            else:
+                segment = segment_of(item.impact_category)
+                label = f"{SEGMENT_LABELS[segment]} · {item.region}"
+                by_key.setdefault(label, []).append(item)
+
+        events: list[CriticalEvent] = []
+        claimed: set[int] = set()  # an item feeds at most one event
+        for label, items in by_key.items():
+            fresh = [i for i in items if i.id not in claimed]
+            sources = {i.source_name for i in fresh}
             if len(sources) < self._min_sources:
                 continue
             # Representative = highest-relevance item, for the alert link.
-            representative = max(items, key=lambda i: i.relevance_score)
+            representative = max(fresh, key=lambda i: i.relevance_score)
             events.append(
-                ChokepointEvent(
-                    chokepoint=choke,
-                    item_ids=tuple(i.id for i in items if i.id is not None),
+                CriticalEvent(
+                    label=label,
+                    item_ids=tuple(i.id for i in fresh if i.id is not None),
                     sources=tuple(sorted(sources)),
                     representative_id=representative.id or 0,
                 )
             )
+            claimed.update(i.id for i in fresh if i.id is not None)
         return events
 
 

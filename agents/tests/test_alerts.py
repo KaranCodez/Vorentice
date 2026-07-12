@@ -82,7 +82,7 @@ def test_already_alerted_does_not_refire():
     )
 
 
-# ── Event corroboration (by chokepoint) ──────────────────────────────
+# ── Event corroboration (chokepoints AND every other segment) ────────
 
 def test_event_corroboration_fires_on_two_sources():
     from vorentice_agents.pipeline.alerts import EventCorroborationPolicy
@@ -95,7 +95,7 @@ def test_event_corroboration_fires_on_two_sources():
         it.id = i + 1
     events = EventCorroborationPolicy().find_events(items)
     assert len(events) == 1
-    assert events[0].chokepoint == "Strait of Hormuz"
+    assert events[0].label == "Strait of Hormuz"
     assert events[0].representative_id == 1  # highest relevance
     assert set(events[0].sources) == {"oilprice", "et_energyworld"}
 
@@ -111,6 +111,48 @@ def test_event_corroboration_needs_independent_sources():
     for i, it in enumerate(items):
         it.id = i + 1
     assert EventCorroborationPolicy().find_events(items) == []
+
+
+def test_event_corroboration_without_chokepoint_uses_segment_region():
+    """A war escalation with NO chokepoint tag must still corroborate —
+    the system watches all segments, not one route."""
+    from vorentice_agents.pipeline.alerts import EventCorroborationPolicy
+
+    items = [
+        _row(source_name="aljazeera", chokepoints="",
+             impact_category="armed_conflict", region="middle_east"),
+        _row(source_name="gnews_conflict", chokepoints="",
+             impact_category="armed_conflict", region="middle_east"),
+    ]
+    for i, it in enumerate(items):
+        it.id = i + 1
+    events = EventCorroborationPolicy().find_events(items)
+    assert len(events) == 1
+    assert "Wars & Geopolitical Conflicts" in events[0].label
+    assert "middle_east" in events[0].label
+
+
+def test_multiple_simultaneous_events_all_surface():
+    """Charter requirement: a war + a port shutdown + a weather crisis
+    happening at once produce SEPARATE events, not one."""
+    from vorentice_agents.pipeline.alerts import EventCorroborationPolicy
+
+    items = [
+        _row(source_name="a", chokepoints="", impact_category="armed_conflict", region="middle_east"),
+        _row(source_name="b", chokepoints="", impact_category="armed_conflict", region="middle_east"),
+        _row(source_name="c", chokepoints="", impact_category="port_operations", region="asia_pacific"),
+        _row(source_name="d", chokepoints="", impact_category="port_operations", region="asia_pacific"),
+        _row(source_name="e", chokepoints="", impact_category="weather", region="india"),
+        _row(source_name="f", chokepoints="", impact_category="weather", region="india"),
+    ]
+    for i, it in enumerate(items):
+        it.id = i + 1
+    events = EventCorroborationPolicy().find_events(items)
+    labels = {e.label for e in events}
+    assert len(events) == 3
+    assert any("Wars & Geopolitical" in l for l in labels)
+    assert any("Ports & Shipping" in l for l in labels)
+    assert any("Weather" in l for l in labels)
 
 
 # ── End-to-end: corroboration arriving later still raises the alert ──

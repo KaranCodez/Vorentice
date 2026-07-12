@@ -23,9 +23,10 @@ def test_eia_large_build_is_not_alarming():
     assert _severity_for_change(+12000) == Severity.LOW
 
 
-def test_fred_double_digit_move_is_high():
-    assert _severity_for_move(-12.5) == Severity.HIGH
-    assert _severity_for_move(6.0) == Severity.MEDIUM
+def test_fred_price_shock_severity_scale():
+    assert _severity_for_move(-12.5) == Severity.CRITICAL  # double-digit shock
+    assert _severity_for_move(6.0) == Severity.HIGH
+    assert _severity_for_move(3.0) == Severity.MEDIUM
     assert _severity_for_move(1.0) == Severity.LOW
 
 

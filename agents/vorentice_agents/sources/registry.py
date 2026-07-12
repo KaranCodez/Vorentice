@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 _DEFAULT_RELIEFWEB_APPNAME = "vorentice-news-agent"
 
 # name -> feed URL. Names are stable identifiers used in stats & the DB.
+# One or more feeds per monitored segment — energy, maritime/ports,
+# conflict, official — so no single domain dominates coverage.
 RSS_FEEDS: dict[str, str] = {
     # Energy trade press
     "oilprice": "https://oilprice.com/rss/main",
@@ -40,6 +42,20 @@ RSS_FEEDS: dict[str, str] = {
     "ogj_pipelines": (
         "https://www.ogj.com/__rss/website-scheduled-content.xml"
         "?input=%7B%22sectionAlias%22%3A%22pipelines-transportation%22%7D"
+    ),
+    # Maritime & shipping press — ports, canals, vessel incidents
+    "gcaptain": "https://gcaptain.com/feed/",
+    "maritime_exec": "https://maritime-executive.com/articles.rss",
+    # World news & conflict coverage
+    "aljazeera": "https://www.aljazeera.com/xml/rss/all.xml",
+    # Targeted Google News sweeps (keyless; named in the project charter)
+    "gnews_ports": (
+        "https://news.google.com/rss/search?q=port%20closure%20OR%20"
+        "shipping%20disruption%20OR%20canal%20blocked&hl=en-IN&gl=IN&ceid=IN:en"
+    ),
+    "gnews_conflict": (
+        "https://news.google.com/rss/search?q=missile%20attack%20OR%20"
+        "drone%20strike%20tanker%20OR%20war%20escalation&hl=en-IN&gl=IN&ceid=IN:en"
     ),
     # Think-tank analysis
     "csis": "https://www.csis.org/rss.xml",
@@ -58,7 +74,14 @@ def build_default_sources(settings: NewsAgentSettings) -> list[NewsSource]:
         GdeltDocSource(timespan=settings.gdelt_timespan),
     ]
     sources.extend(
-        RssSource(name=name, feed_url=url) for name, url in RSS_FEEDS.items()
+        RssSource(
+            name=name,
+            feed_url=url,
+            # Google News is an aggregator — attribute the real publisher
+            # per entry so corroboration counts independent outlets.
+            publisher_per_entry=name.startswith("gnews_"),
+        )
+        for name, url in RSS_FEEDS.items()
     )
     return sources
 
