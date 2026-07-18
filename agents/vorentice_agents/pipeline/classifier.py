@@ -45,7 +45,10 @@ class _ArticleVerdict(BaseModel):
     index: int = Field(description="0-based index of the article in the input list")
     relevance_score: float = Field(
         ge=0.0, le=1.0,
-        description="Relevance to India's crude-oil supply security",
+        description=(
+            "Relevance to global supply chains, trade and logistics "
+            "(internal filter only — never shown to users)"
+        ),
     )
     severity: Severity
     impact_category: ImpactCategory
@@ -57,22 +60,57 @@ class _ArticleVerdict(BaseModel):
     summary: str = Field(
         description="Two factual sentences grounded ONLY in the given headline/snippet"
     )
+    trade_impact: str = Field(
+        default="",
+        description=(
+            "One or two sentences: how this affects global trade and "
+            "logistics RIGHT NOW (flows, routes, costs, delays). Empty "
+            "string if there is no current trade effect."
+        ),
+    )
+    escalation_potential: bool = Field(
+        default=False,
+        description=(
+            "True if this is NOT critical right now but could plausibly "
+            "escalate into a major supply-chain disruption later"
+        ),
+    )
+    watchlist_reason: str = Field(
+        default="",
+        description=(
+            "If escalation_potential: one sentence on WHY this belongs "
+            "on the watchlist. Empty otherwise."
+        ),
+    )
+    escalation_triggers: str = Field(
+        default="",
+        description=(
+            "If escalation_potential: the concrete trigger(s) that would "
+            "turn this into a critical disruption. Empty otherwise."
+        ),
+    )
 
 
 class _BatchVerdict(BaseModel):
     verdicts: list[_ArticleVerdict]
 
 
-_SYSTEM_PROMPT = """You are an intelligence analyst for India's national crude-oil \
-supply security monitoring system. The system watches ALL domains that can affect \
-supply chains and trade — wars, oil markets, weather, ports, sanctions, military \
-incidents — worldwide. Do NOT anchor on any single route or scenario: an event in \
-ANY category and ANY region deserves full, independent assessment.
+_SYSTEM_PROMPT = """You are an intelligence analyst for a global supply-chain and \
+geopolitical monitoring system. Its users read NO other newspaper: your analysis is \
+their complete picture of world events affecting trade, so it must be comprehensive, \
+global and multi-category. The system watches ALL domains that can affect supply \
+chains and trade — wars, oil and energy markets, weather, ports, sanctions, route \
+blockages, military incidents, logistics — worldwide. Do NOT anchor on any single \
+route, region, country or scenario (the Strait of Hormuz is one chokepoint among \
+many, not the default): an event in ANY category and ANY region deserves full, \
+independent assessment.
 
 For each numbered news article, assess:
-- relevance_score: how much this affects India's crude-oil supply chain \
-(imports, prices, shipping routes, ports, refining). 0.0 = unrelated, 1.0 = direct major impact.
-- severity: operational urgency, judged by THREAT to supply and logistics.
+- relevance_score: how much this affects global supply chains, trade flows and \
+logistics (commodities, shipping routes, ports, transport, production). \
+0.0 = unrelated, 1.0 = direct major impact. This is an internal filter only — \
+users never see numbers, so never mention scores in any text field.
+- severity: operational urgency, judged by THREAT to supply chains and logistics.
 - impact_category: the single best fit from this taxonomy:
   * supply_disruption — physical crude/product supply interrupted or at risk
   * price_movement — significant market price action
@@ -90,6 +128,20 @@ piracy, vessel seizures, terrorism
 - chokepoints: named maritime chokepoints genuinely implicated (often none).
 - summary: exactly two factual sentences. NEVER add facts not present in the \
 headline/snippet. If information is thin, say what is known and note it is a headline-only report.
+- trade_impact: 1–2 sentences on how this affects global trade and logistics \
+RIGHT NOW — rerouted flows, delayed shipments, price pass-through, capacity lost, \
+insurance/freight costs. Ground it in the text; if there is no current trade \
+effect, return an empty string. Qualitative words only, never numeric scores.
+- escalation_potential / watchlist_reason / escalation_triggers: the watchlist \
+call. Flag escalation_potential=true for events that are NOT critical today but \
+could become major disruptions — e.g. rising tensions near a trade route, a \
+forming storm system, threatened strike action, sanctions under discussion, \
+military posturing near a chokepoint. Give the WHY (watchlist_reason) and the \
+concrete tripwires that would make it critical (escalation_triggers, e.g. \
+"strike vote passes and walkout begins", "storm intensifies to category 4 on a \
+port-bound track", "naval incident closes the strait to tankers"). For events \
+already critical/high or with no plausible escalation path, leave all three \
+at their defaults.
 
 SEVERITY RUBRIC — apply strictly, in ANY category:
 - "critical": an ACTIVE or IMMINENT disruption — chokepoint/canal closure, \
@@ -199,6 +251,10 @@ class AzureLlmClassifier(ArticleClassifier):
                         c for c in item.chokepoints if c in CHOKEPOINTS
                     ),
                     summary=item.summary,
+                    trade_impact=item.trade_impact.strip(),
+                    escalation_potential=item.escalation_potential,
+                    watchlist_reason=item.watchlist_reason.strip(),
+                    escalation_triggers=item.escalation_triggers.strip(),
                     classified_by=self._deployment,
                 )
             )

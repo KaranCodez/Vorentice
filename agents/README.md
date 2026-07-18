@@ -1,7 +1,28 @@
 # Vorentice Agent Layer
 
 Phase 2 of Vorentice — the autonomous agent backend. Currently ships the
-**News Agent**: 24/7 OSINT ingestion for national crude-oil supply security.
+**News Agent**: 24/7 global supply-chain and geopolitical news monitoring —
+a complete newspaper replacement for its users.
+
+## The product: a three-section intelligence report
+
+`GET /api/news/report` is the agent's primary output, structured per the
+charter:
+
+1. **The Daily Brief** — a narrative roundup for EVERY one of the 8
+   monitored categories (quiet categories included, stated explicitly),
+   so the user never needs to consult another newspaper.
+2. **Critical Events Tracker** — every significant disruptive event
+   across all categories (never capped to one per category), each with
+   its category, event summary, qualitative criticality level, and its
+   logistics/trade impact right now.
+3. **Emerging Threats (Watchlist)** — events that are NOT critical yet
+   but could escalate, with why they are watched and the concrete
+   triggers that would make them critical.
+
+Charter rules enforced end-to-end: **no numeric risk scores anywhere**
+(urgency is Critical / High / Moderate / Low / Emerging), and **no
+anchoring** on any single route, region or scenario.
 
 ## Architecture
 
@@ -9,19 +30,26 @@ Deterministic LangGraph pipeline; the LLM is an enrichment stage, never the
 controller:
 
 ```
-fetch ──► dedup ──► prefilter ──┬─► classify ──► persist ──► alerts
-  articles + signals  (keyword,  └──────────────────────────► persist ─► alerts
-                       cost guard)   (Azure OpenAI, batched
+fetch ──► dedup ──► prefilter ──┬─► classify ──► persist ──► digest ──► alerts
+  articles + signals  (keyword,  └─────────────► persist    (Daily Brief
+                       cost guard)   (Azure OpenAI, batched   composer)
                                       structured output)
 ```
 
-**Coverage is multi-domain by charter** — the agent monitors wars, oil
-markets, weather, ports, sanctions and military incidents worldwide, and
-groups everything into operator segments: Energy Markets · Weather ·
-Sanctions & Trade · Ports & Shipping · Routes & Chokepoints · Wars &
-Geopolitics · Military & Security. `GET /api/news/briefing` returns the
-latest significant developments per segment, each with its criticality
-level — never a numeric risk score (scoring is the Risk Agent's job).
+**Coverage is multi-domain by charter** — the agent monitors the 8
+categories worldwide: Oil Pricing & Energy Markets · Weather Events
+Affecting Shipping & Trade · Sanctions & Trade Restrictions · Ports &
+Shipping Operations · Route Blockages & Disruptions · Wars & Geopolitical
+Conflicts · Missile Attacks, Military Activity & Security Incidents ·
+Global Logistics & Supply Chain.
+
+**Classification** (Azure OpenAI, structured output) now also produces,
+per item: the current **logistics/trade impact**, and the **watchlist
+call** — escalation potential, why it is watched, and the concrete
+escalation triggers. The **digest stage** composes the Daily Brief (one
+narrative per category from the window's stored items) after each cycle
+that stores new items; a failure there never fails the run — the previous
+edition stays current.
 
 **Two source families, one feed:**
 - **Article sources** → `RawArticle`, judged by the LLM: GDELT DOC (10
@@ -75,7 +103,7 @@ vorentice_agents/
 ├── domain/           # enums, models (frozen pydantic), graph state
 ├── sources/          # NewsSource ABC + GDELT/RSS/ReliefWeb adapters
 │   └── signals/      # SignalSource ABC + EIA/FRED/Open-Meteo (deterministic)
-├── pipeline/         # deduplicator, prefilter, classifier, alerts (2 policies)
+├── pipeline/         # deduplicator, prefilter, classifier, digest, alerts
 ├── persistence/      # SQLModel tables, repository (only module with SQL)
 ├── agent/            # LangGraph nodes + graph assembly (composition root)
 ├── api/              # FastAPI routes: /news/latest, /news/stream (SSE), …
@@ -111,6 +139,7 @@ the pipeline runs end-to-end with the heuristic classifier.
 | Method | Path                | Purpose                              |
 |--------|---------------------|--------------------------------------|
 | GET    | `/api/health`       | Liveness probe                       |
+| GET    | `/api/news/report`  | **The three-section intelligence report** — Daily Brief, Critical Events Tracker, Emerging Threats (`hours`) |
 | GET    | `/api/news/briefing`| Situation briefing grouped by segment (`hours`, `min_severity`) |
 | GET    | `/api/news/latest`  | Recent items (`limit`, `min_relevance`, `severity`) |
 | GET    | `/api/news/stream`  | SSE push of newly stored items       |

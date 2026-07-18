@@ -44,6 +44,8 @@ class NewsAgentSettings(BaseSettings):
     llm_batch_size: int = Field(default=8, ge=1, le=20)
     # How far back GDELT queries look on each run.
     gdelt_timespan: str = "1h"
+    # Daily Brief window — the digest covers items from the last N hours.
+    digest_window_hours: int = Field(default=24, ge=1, le=168)
     http_timeout_seconds: float = 20.0
     # Hard per-source SLA — a slow/throttled provider is cut off here.
     source_fetch_budget_seconds: float = 45.0

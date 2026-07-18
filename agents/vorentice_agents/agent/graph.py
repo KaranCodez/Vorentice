@@ -2,8 +2,8 @@
 
 Topology:
 
-    fetch ──► dedup ──► prefilter ──┬─► classify ──► persist ──► END
-                                    └─► END   (nothing relevant)
+    fetch ─► dedup ─► prefilter ─┬─► classify ─► persist ─► digest ─► alerts ─► END
+                                 └────────────► persist   (nothing relevant)
 
 `build_news_agent()` is the composition root: it wires settings,
 sources, pipeline stages and storage together. Everything else in the
@@ -20,6 +20,7 @@ from vorentice_agents.agent.nodes import (
     AlertNode,
     ClassifyNode,
     DedupNode,
+    DigestNode,
     FetchNode,
     PersistNode,
     PreFilterNode,
@@ -30,6 +31,11 @@ from vorentice_agents.pipeline.classifier import (
     ArticleClassifier,
     AzureLlmClassifier,
     HeuristicClassifier,
+)
+from vorentice_agents.pipeline.digest import (
+    AzureLlmComposer,
+    BriefingComposer,
+    HeuristicComposer,
 )
 from vorentice_agents.pipeline.deduplicator import Deduplicator
 from vorentice_agents.pipeline.prefilter import KeywordPreFilter
@@ -82,6 +88,7 @@ def build_news_agent(
     sources: list[NewsSource] | None = None,
     signal_sources: list[SignalSource] | None = None,
     classifier: ArticleClassifier | None = None,
+    composer: BriefingComposer | None = None,
     repository: NewsRepository | None = None,
 ) -> NewsAgent:
     """Composition root. Keyword overrides exist for tests."""
@@ -97,6 +104,7 @@ def build_news_agent(
             [] if explicit_sources else build_signal_sources(settings.sources)
         )
     classifier = classifier or _select_classifier(settings)
+    composer = composer or _select_composer(settings)
 
     graph = StateGraph(NewsAgentState)
     graph.add_node(
@@ -118,6 +126,14 @@ def build_news_agent(
     )
     graph.add_node("classify", ClassifyNode(classifier, settings.news.llm_batch_size))
     graph.add_node("persist", PersistNode(repository))
+    graph.add_node(
+        "digest",
+        DigestNode(
+            repository,
+            composer,
+            window_hours=settings.news.digest_window_hours,
+        ),
+    )
     graph.add_node("alerts", AlertNode(repository, AlertPolicy()))
 
     graph.add_edge(START, "fetch")
@@ -127,7 +143,8 @@ def build_news_agent(
         "prefilter", _has_relevant_articles, ["classify", "persist"]
     )
     graph.add_edge("classify", "persist")
-    graph.add_edge("persist", "alerts")
+    graph.add_edge("persist", "digest")
+    graph.add_edge("digest", "alerts")
     graph.add_edge("alerts", END)
 
     return NewsAgent(graph.compile(), repository)
@@ -146,3 +163,10 @@ def _select_classifier(settings: AppSettings) -> ArticleClassifier:
     return AzureLlmClassifier(
         settings.azure_openai, batch_size=settings.news.llm_batch_size
     )
+
+
+def _select_composer(settings: AppSettings) -> BriefingComposer:
+    """Daily Brief composer follows the classifier's degradation path."""
+    if settings.news.dry_run or not settings.azure_openai.is_configured:
+        return HeuristicComposer()
+    return AzureLlmComposer(settings.azure_openai)

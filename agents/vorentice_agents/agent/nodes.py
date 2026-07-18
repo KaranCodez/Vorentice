@@ -17,13 +17,19 @@ from datetime import datetime, timezone
 
 import httpx
 
+from vorentice_agents.domain.enums import NewsSegment, segment_of
 from vorentice_agents.domain.models import ClassifiedArticle, RawArticle
 from vorentice_agents.domain.state import NewsAgentState
 from vorentice_agents.pipeline.alerts import AlertPolicy, EventCorroborationPolicy
 from vorentice_agents.pipeline.classifier import ArticleClassifier
 from vorentice_agents.pipeline.deduplicator import Deduplicator
+from vorentice_agents.pipeline.digest import (
+    QUIET_SEGMENT_TEXT,
+    BriefingComposer,
+)
 from vorentice_agents.pipeline.prefilter import KeywordPreFilter
 from vorentice_agents.persistence.repository import NewsRepository
+from vorentice_agents.persistence.tables import SegmentDigestRow
 from vorentice_agents.sources.base import NewsSource, SourceError
 from vorentice_agents.sources.signals.base import SignalSource
 
@@ -164,6 +170,74 @@ class PersistNode:
             stored,
             len(state.get("classified", [])),
             len(state.get("signal_items", [])),
+        )
+        return {"stats": stats}
+
+
+class DigestNode:
+    """Regenerates the Daily Brief (Section 1 of the report) — one
+    narrative digest per monitored category, composed from the window's
+    stored items.
+
+    Every generation writes a row for ALL categories: busy ones get the
+    composed narrative, quiet ones get an explicit "no significant
+    developments" line. That makes each generation a complete newspaper
+    edition — the report never has to mix digests from different
+    generations, and a category going quiet is itself visible news.
+
+    A composition failure never fails the run: the previous generation
+    simply stays current until the next successful cycle.
+    """
+
+    def __init__(
+        self,
+        repository: NewsRepository,
+        composer: BriefingComposer,
+        window_hours: int = 24,
+    ) -> None:
+        self._repository = repository
+        self._composer = composer
+        self._window_hours = window_hours
+
+    async def __call__(self, state: NewsAgentState) -> NewsAgentState:
+        stats = dict(state.get("stats", {}))
+
+        # Idle-cycle guard: nothing new stored and a brief already exists
+        # -> the existing edition is still accurate; don't spend tokens.
+        if not stats.get("stored") and self._repository.latest_digests():
+            stats["digests_generated"] = 0
+            return {"stats": stats}
+
+        items_by_segment: dict[NewsSegment, list] = {
+            segment: [] for segment in NewsSegment
+        }
+        for row in self._repository.briefing_items(hours=self._window_hours):
+            items_by_segment[segment_of(row.impact_category)].append(row)
+
+        try:
+            digests = await self._composer.compose(items_by_segment)
+        except Exception as error:  # noqa: BLE001 — degradation path
+            logger.error("daily-brief composition failed: %s", error)
+            stats["digests_generated"] = 0
+            return {"stats": stats}
+
+        generation = [
+            SegmentDigestRow(
+                segment=segment.value,
+                digest=digests.get(segment, QUIET_SEGMENT_TEXT),
+                item_count=len(items_by_segment[segment]),
+                window_hours=self._window_hours,
+                composed_by=self._composer.name,
+            )
+            for segment in NewsSegment
+        ]
+        self._repository.save_digests(generation)
+        stats["digests_generated"] = len(digests)
+        logger.info(
+            "daily brief: %d of %d categories composed (%d quiet)",
+            len(digests),
+            len(generation),
+            len(generation) - len(digests),
         )
         return {"stats": stats}
 

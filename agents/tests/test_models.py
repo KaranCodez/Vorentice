@@ -50,3 +50,46 @@ def test_classified_article_is_frozen():
     except Exception:
         raised = True
     assert raised
+
+
+def test_report_fields_default_safe():
+    """Heuristic classification must never fabricate impact analysis or
+    watchlist reasoning — the defaults keep those fields empty."""
+    article = RawArticle(url="https://example.com", title="T", source_name="s")
+    classified = ClassifiedArticle(
+        article=article,
+        relevance_score=0.5,
+        severity=Severity.MEDIUM,
+        impact_category=ImpactCategory.OTHER,
+        region=Region.GLOBAL,
+        summary="T",
+        classified_by="heuristic",
+    )
+    assert classified.trade_impact == ""
+    assert classified.escalation_potential is False
+    assert classified.watchlist_reason == ""
+    assert classified.escalation_triggers == ""
+
+
+def test_report_fields_roundtrip():
+    article = RawArticle(url="https://example.com", title="T", source_name="s")
+    classified = ClassifiedArticle(
+        article=article,
+        relevance_score=0.8,
+        severity=Severity.MEDIUM,
+        impact_category=ImpactCategory.GEOPOLITICAL,
+        region=Region.MIDDLE_EAST,
+        summary="Tensions rising near a transit corridor.",
+        trade_impact="No flows disrupted yet; insurers watching.",
+        escalation_potential=True,
+        watchlist_reason="Naval build-up near a major tanker route.",
+        escalation_triggers="Any vessel interdiction or strait closure.",
+        classified_by="test",
+    )
+    from vorentice_agents.persistence.repository import _to_row
+
+    row = _to_row(classified)
+    assert row.trade_impact == "No flows disrupted yet; insurers watching."
+    assert row.escalation_potential is True
+    assert row.watchlist_reason == "Naval build-up near a major tanker route."
+    assert row.escalation_triggers == "Any vessel interdiction or strait closure."

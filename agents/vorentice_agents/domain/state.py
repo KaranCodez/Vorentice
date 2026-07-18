@@ -24,6 +24,7 @@ class RunStats(TypedDict, total=False):
     source_errors: dict[str, str]  # source name -> error message
     llm_calls: int
     alerts_raised: int
+    digests_generated: int   # Daily Brief categories composed this run
 
 
 class NewsAgentState(TypedDict, total=False):

@@ -51,12 +51,22 @@ class ClassifiedArticle(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     article: RawArticle
+    # Internal LLM-budget gate only — NEVER surfaced to users; the report
+    # speaks exclusively in qualitative criticality descriptors.
     relevance_score: float = Field(ge=0.0, le=1.0)
     severity: Severity
     impact_category: ImpactCategory
     region: Region
     chokepoints: tuple[str, ...] = ()
     summary: str
+    # How this event affects global trade and logistics right now
+    # (Section 2 of the intelligence report requires it per event).
+    trade_impact: str = ""
+    # Watchlist fields (Section 3): a non-critical event that could
+    # escalate is flagged here, with the reasoning and the tripwires.
+    escalation_potential: bool = False
+    watchlist_reason: str = ""
+    escalation_triggers: str = ""
     classified_by: str  # model deployment name, or "heuristic"
     classified_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)

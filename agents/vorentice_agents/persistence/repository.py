@@ -13,7 +13,12 @@ from sqlmodel import col, select
 from vorentice_agents.domain.models import ClassifiedArticle
 from vorentice_agents.domain.state import RunStats
 from vorentice_agents.persistence.database import open_session
-from vorentice_agents.persistence.tables import AgentRunRow, AlertRow, NewsItemRow
+from vorentice_agents.persistence.tables import (
+    AgentRunRow,
+    AlertRow,
+    NewsItemRow,
+    SegmentDigestRow,
+)
 
 
 class NewsRepository:
@@ -114,6 +119,44 @@ class NewsRepository:
                     .order_by(col(NewsItemRow.fetched_at).desc())
                 ).all()
             )
+
+    def watchlist_items(self, hours: int = 48) -> list[NewsItemRow]:
+        """Emerging Threats (Section 3): items flagged with escalation
+        potential that are NOT already critical/high — those belong in
+        the Critical Events Tracker, not the watchlist."""
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        with open_session() as session:
+            rows = session.exec(
+                select(NewsItemRow)
+                .where(
+                    NewsItemRow.escalation_potential == True,  # noqa: E712
+                    col(NewsItemRow.severity).in_(["low", "medium"]),
+                    NewsItemRow.fetched_at >= cutoff,
+                )
+                .order_by(col(NewsItemRow.fetched_at).desc())
+            ).all()
+        return list(rows)
+
+    def save_digests(self, digests: list[SegmentDigestRow]) -> None:
+        """Store one generation of Daily Brief digests (append-only —
+        history is cheap and lets operators diff briefs over time)."""
+        if not digests:
+            return
+        with open_session() as session:
+            for digest in digests:
+                session.add(digest)
+            session.commit()
+
+    def latest_digests(self) -> dict[str, SegmentDigestRow]:
+        """Most recent digest per segment (across generations)."""
+        with open_session() as session:
+            rows = session.exec(
+                select(SegmentDigestRow).order_by(
+                    col(SegmentDigestRow.generated_at).asc()
+                )
+            ).all()
+        # Later generations overwrite earlier ones per segment.
+        return {row.segment: row for row in rows}
 
     def items_since(self, item_id: int) -> list[NewsItemRow]:
         """Items newer than a known id — powers SSE incremental pushes."""
@@ -269,6 +312,10 @@ def _to_row(item: ClassifiedArticle) -> NewsItemRow:
         region=item.region.value,
         chokepoints=",".join(item.chokepoints),
         summary=item.summary,
+        trade_impact=item.trade_impact,
+        escalation_potential=item.escalation_potential,
+        watchlist_reason=item.watchlist_reason,
+        escalation_triggers=item.escalation_triggers,
         classified_by=item.classified_by,
         classified_at=item.classified_at,
     )

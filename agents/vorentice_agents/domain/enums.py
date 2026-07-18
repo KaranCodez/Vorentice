@@ -30,6 +30,26 @@ SEVERITY_ORDER: dict[str, int] = {
 }
 
 
+#: Qualitative criticality descriptors — the report NEVER shows numeric
+#: risk scores; urgency is always expressed with these words.
+CRITICALITY_LABELS: dict[str, str] = {
+    Severity.CRITICAL.value: "Critical",
+    Severity.HIGH.value: "High",
+    Severity.MEDIUM.value: "Moderate",
+    Severity.LOW.value: "Low",
+}
+
+
+def criticality_label(severity: str, escalation_potential: bool = False) -> str:
+    """Human descriptor for an item's urgency. Items below High that carry
+    escalation potential read as "Emerging" — the watchlist vocabulary."""
+    if escalation_potential and SEVERITY_ORDER.get(severity, 0) < SEVERITY_ORDER[
+        Severity.HIGH.value
+    ]:
+        return "Emerging"
+    return CRITICALITY_LABELS.get(severity, severity.title())
+
+
 class ImpactCategory(StrEnum):
     # Energy & markets
     SUPPLY_DISRUPTION = "supply_disruption"
@@ -79,15 +99,18 @@ CATEGORY_TO_SEGMENT: dict[str, NewsSegment] = {
     ImpactCategory.OTHER.value: NewsSegment.OTHER,
 }
 
+# The 8 monitored categories, worded per the product charter. Every one
+# of them appears in the Daily Brief every day — even when quiet — so the
+# report is a complete newspaper replacement, not a highlights reel.
 SEGMENT_LABELS: dict[NewsSegment, str] = {
-    NewsSegment.ENERGY_MARKETS: "Oil & Energy Markets",
-    NewsSegment.WEATHER: "Weather Events",
+    NewsSegment.ENERGY_MARKETS: "Oil Pricing & Energy Markets",
+    NewsSegment.WEATHER: "Weather Events Affecting Shipping & Trade",
     NewsSegment.SANCTIONS_TRADE: "Sanctions & Trade Restrictions",
     NewsSegment.PORTS_SHIPPING: "Ports & Shipping Operations",
-    NewsSegment.ROUTES_CHOKEPOINTS: "Routes & Chokepoints",
+    NewsSegment.ROUTES_CHOKEPOINTS: "Route Blockages & Disruptions",
     NewsSegment.WAR_GEOPOLITICS: "Wars & Geopolitical Conflicts",
-    NewsSegment.MILITARY_SECURITY: "Military & Security Incidents",
-    NewsSegment.OTHER: "Other Developments",
+    NewsSegment.MILITARY_SECURITY: "Missile Attacks, Military Activity & Security Incidents",
+    NewsSegment.OTHER: "Global Logistics & Supply Chain",
 }
 
 
@@ -109,8 +132,8 @@ class Region(StrEnum):
     GLOBAL = "global"
 
 
-# Named maritime chokepoints relevant to Indian crude imports.
-# Used both by the pre-filter heuristics and the LLM output schema.
+# Named maritime chokepoints of global trade. Used both by the
+# pre-filter heuristics and the LLM output schema.
 CHOKEPOINTS: tuple[str, ...] = (
     "Strait of Hormuz",
     "Strait of Malacca",

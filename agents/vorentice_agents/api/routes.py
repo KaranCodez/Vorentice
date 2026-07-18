@@ -1,6 +1,8 @@
 """HTTP surface of the News Agent.
 
 GET  /health          — liveness probe (Azure Container Apps).
+GET  /news/report     — the three-section intelligence report (primary output):
+                        Daily Brief · Critical Events Tracker · Emerging Threats.
 GET  /news/latest     — most recent classified items, filterable.
 GET  /news/stream     — Server-Sent Events; pushes items as they land.
 GET  /news/runs       — recent pipeline runs (ops visibility).
@@ -10,6 +12,7 @@ POST /news/trigger    — run the pipeline now (manual/testing).
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Query, Request
 from sse_starlette.sse import EventSourceResponse
@@ -17,18 +20,24 @@ from sse_starlette.sse import EventSourceResponse
 from vorentice_agents.api.schemas import (
     AgentRunOut,
     AlertOut,
+    CategoryBriefOut,
+    CriticalEventOut,
+    IntelligenceReportOut,
     NewsItemOut,
     SegmentBriefingOut,
     TriggerResponse,
+    WatchlistEntryOut,
 )
 from vorentice_agents.domain.enums import (
     SEGMENT_LABELS,
     SEVERITY_ORDER,
     NewsSegment,
+    criticality_label,
     segment_of,
 )
 from vorentice_agents.persistence.repository import NewsRepository
 from vorentice_agents.persistence.tables import NewsItemRow
+from vorentice_agents.pipeline.digest import QUIET_SEGMENT_TEXT, stitch_summaries
 
 logger = logging.getLogger(__name__)
 
@@ -45,12 +54,16 @@ def _to_out(row: NewsItemRow) -> NewsItemOut:
         source_name=row.source_name,
         published_at=row.published_at,
         fetched_at=row.fetched_at,
-        relevance_score=row.relevance_score,
         severity=row.severity,
+        criticality=criticality_label(row.severity, row.escalation_potential),
         impact_category=row.impact_category,
         region=row.region,
         chokepoints=[c for c in row.chokepoints.split(",") if c],
         summary=row.summary,
+        trade_impact=row.trade_impact,
+        escalation_potential=row.escalation_potential,
+        watchlist_reason=row.watchlist_reason,
+        escalation_triggers=row.escalation_triggers,
         corroboration_count=row.corroboration_count,
         corroborating_sources=[
             s for s in row.corroborating_sources.split(",") if s
@@ -152,6 +165,119 @@ async def briefing(
         reverse=True,
     )
     return briefing_out
+
+
+@router.get("/news/report", response_model=IntelligenceReportOut)
+async def report(
+    request: Request,
+    hours: int = Query(default=24, ge=1, le=168),
+) -> IntelligenceReportOut:
+    """The full intelligence report — the agent's primary product.
+
+    Section 1 (Daily Brief): a narrative roundup for EVERY monitored
+    category, quiet ones included, so the user never needs another
+    newspaper. Section 2 (Critical Events Tracker): every significant
+    disruptive event across all categories — never capped to one per
+    category — each with its qualitative criticality and its effect on
+    global trade right now. Section 3 (Emerging Threats): items that are
+    not critical yet but could escalate, with the reasoning and concrete
+    triggers. No numeric scores anywhere.
+    """
+    repository: NewsRepository = request.app.state.repository
+
+    items = repository.briefing_items(hours=hours)
+    by_segment: dict[NewsSegment, list[NewsItemRow]] = {
+        segment: [] for segment in NewsSegment
+    }
+    for row in items:
+        by_segment[segment_of(row.impact_category)].append(row)
+
+    digests = repository.latest_digests()
+
+    # ── Section 1: Daily Brief — all 8 categories, always ──
+    daily_brief: list[CategoryBriefOut] = []
+    for segment in NewsSegment:
+        segment_items = by_segment[segment]
+        counts: dict[str, int] = {}
+        for row in segment_items:
+            counts[row.severity] = counts.get(row.severity, 0) + 1
+        digest_row = digests.get(segment.value)
+        if digest_row:
+            digest_text = digest_row.digest
+        elif segment_items:
+            # No generation yet (fresh or just-migrated DB) but the window
+            # has news — serve a grounded stitched roundup rather than
+            # falsely claiming the category is quiet.
+            digest_text = stitch_summaries(segment_items)
+        else:
+            digest_text = QUIET_SEGMENT_TEXT
+        daily_brief.append(
+            CategoryBriefOut(
+                segment=segment.value,
+                label=SEGMENT_LABELS[segment],
+                digest=digest_text,
+                item_count=len(segment_items),
+                digest_generated_at=(
+                    digest_row.generated_at if digest_row else None
+                ),
+                counts=counts,
+                headlines=[_to_out(row) for row in segment_items],
+            )
+        )
+
+    # ── Section 2: Critical Events Tracker — ALL significant events ──
+    high_floor = SEVERITY_ORDER["high"]
+    critical_rows = [
+        row for row in items if SEVERITY_ORDER.get(row.severity, 0) >= high_floor
+    ]
+    critical_rows.sort(
+        key=lambda r: (SEVERITY_ORDER.get(r.severity, 0), r.fetched_at),
+        reverse=True,
+    )
+    critical_events = [
+        CriticalEventOut(
+            category=SEGMENT_LABELS[segment_of(row.impact_category)],
+            segment=segment_of(row.impact_category).value,
+            event_summary=row.summary or row.title,
+            criticality=criticality_label(row.severity),
+            trade_impact=row.trade_impact,
+            region=row.region,
+            chokepoints=[c for c in row.chokepoints.split(",") if c],
+            sources=[
+                row.source_name,
+                *[s for s in row.corroborating_sources.split(",") if s],
+            ],
+            url=row.url,
+            reported_at=row.published_at or row.fetched_at,
+        )
+        for row in critical_rows
+    ]
+
+    # ── Section 3: Emerging Threats (Watchlist) ──
+    watchlist = [
+        WatchlistEntryOut(
+            category=SEGMENT_LABELS[segment_of(row.impact_category)],
+            segment=segment_of(row.impact_category).value,
+            summary=row.summary or row.title,
+            criticality=criticality_label(
+                row.severity, escalation_potential=True
+            ),
+            watchlist_reason=row.watchlist_reason,
+            escalation_triggers=row.escalation_triggers,
+            region=row.region,
+            url=row.url,
+            reported_at=row.published_at or row.fetched_at,
+        )
+        for row in repository.watchlist_items(hours=hours)
+    ]
+
+    return IntelligenceReportOut(
+        generated_at=datetime.now(timezone.utc),
+        window_hours=hours,
+        daily_brief=daily_brief,
+        critical_events=critical_events,
+        watchlist=watchlist,
+    )
 
 
 @router.get("/news/sources")
