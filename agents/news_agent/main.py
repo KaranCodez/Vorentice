@@ -2,9 +2,12 @@
 
 import logging
 
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# .env lives at agents/ root (one level up from news_agent/)
+_env = Path(__file__).parent.parent / ".env"
+load_dotenv(_env if _env.exists() else None)
 
 logging.basicConfig(
     level=logging.INFO,
