@@ -24,9 +24,13 @@ export default function FeedItem({ item }: { item: NewsItem }) {
         <div className="min-w-0">
           <div className="mb-1.5 flex flex-wrap items-center gap-2">
             <span
-              className={`rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.14em] ${SEVERITY_STYLE[item.severity]}`}
+              className={`rounded-full border px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.14em] ${
+                item.criticality === "Emerging"
+                  ? "border-accent/30 bg-accent/15 text-accent-bright"
+                  : SEVERITY_STYLE[item.severity]
+              }`}
             >
-              {item.severity}
+              {item.criticality}
             </span>
             {isSignal(item) ? (
               <span className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 font-mono text-[9px] font-semibold uppercase tracking-[0.14em] text-accent-bright">
@@ -64,16 +68,18 @@ export default function FeedItem({ item }: { item: NewsItem }) {
               {item.summary}
             </p>
           )}
+          {item.trade_impact && (
+            <p className="mt-1.5 line-clamp-2 border-l-2 border-warn/30 pl-2 text-[11px] leading-relaxed text-white/45">
+              <span className="font-mono text-[8px] uppercase tracking-[0.14em] text-warn/70">
+                Trade impact ·{" "}
+              </span>
+              {item.trade_impact}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1.5 pt-0.5">
           <span className="font-mono text-[10px] tabular-nums text-white/35">
             {timeAgo(item.published_at ?? item.fetched_at)}
-          </span>
-          <span
-            className="font-mono text-[10px] font-semibold tabular-nums text-white/55"
-            title="relevance to India crude-supply security"
-          >
-            {(item.relevance_score * 100).toFixed(0)}%
           </span>
         </div>
       </div>
