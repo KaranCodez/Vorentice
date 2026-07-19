@@ -1,9 +1,11 @@
 """Azure OpenAI chat engine for the Risk Agent.
 
-Two responsibilities:
+Three responsibilities:
   * fetch structured intelligence from the News Agent (agent coordination)
-  * run the Risk Agent LLM — both the one-shot ingestion briefing and the
-    streaming interactive QA loop.
+  * generate_briefing — one-shot JSON briefing via raw Azure OpenAI client
+    (uses response_format json_object; no tool calling)
+  * chat — streaming interactive QA via a LangGraph ReAct agent that can
+    call tools (web_search) multiple times before producing a final answer
 """
 
 import json
@@ -11,13 +13,15 @@ import logging
 from typing import AsyncIterator
 
 import httpx
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from openai import AsyncAzureOpenAI
 
+from risk_agent.agent import build_react_agent
 from risk_agent.system_prompt import (
-    RISK_AGENT_SYSTEM_PROMPT,
-    FORMATTING_RULES,
-    FOLLOWUP_RULES,
     CHAT_TURN_RULES,
+    FOLLOWUP_RULES,
+    FORMATTING_RULES,
+    RISK_AGENT_SYSTEM_PROMPT,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,15 +91,41 @@ def _mode_label(mode: str) -> str:
 
 
 class RiskChatEngine:
-    """Stateless engine — callers manage conversation history."""
+    """Stateless engine — callers manage conversation history.
 
-    def __init__(self, endpoint: str, api_key: str, deployment: str, api_version: str):
+    Uses two inference paths:
+      generate_briefing  — raw AsyncAzureOpenAI with json_object mode
+      chat               — LangGraph ReAct agent (multi-step tool calling)
+    """
+
+    def __init__(
+        self,
+        endpoint: str,
+        api_key: str,
+        deployment: str,
+        api_version: str,
+        serper_api_key: str = "",
+    ):
+        # Raw client — kept for generate_briefing which needs json_object mode.
         self._client = AsyncAzureOpenAI(
             azure_endpoint=endpoint,
             api_key=api_key,
             api_version=api_version,
         )
         self._deployment = deployment
+
+        # LangGraph ReAct agent — used for the streaming chat loop.
+        self._agent = build_react_agent(
+            endpoint=endpoint,
+            api_key=api_key,
+            deployment=deployment,
+            api_version=api_version,
+            serper_api_key=serper_api_key,
+        )
+        if serper_api_key:
+            logger.info("RiskChatEngine: web_search tool active")
+        else:
+            logger.info("RiskChatEngine: no tools (SERPER_API_KEY not set)")
 
     def _system(self, payload: str) -> str:
         return (
@@ -104,11 +134,11 @@ class RiskChatEngine:
             f"[INGESTED_NEWS_PAYLOAD]\n{payload}"
         )
 
-    # ── One-shot ingestion briefing (real analysis, not a template) ──
+    # ── One-shot ingestion briefing ──────────────────────────────────
     async def generate_briefing(self, payload: str, mode: str) -> dict:
-        """Run the agent over the ingested payload to produce the opening
-        Aggregated Threat Profile, Global Risk Score, Executive Synthesis
-        and suggested opening questions. Returns a structured dict."""
+        """Produce the opening Aggregated Threat Profile, Risk Score, Executive
+        Synthesis and suggested questions. Uses raw OpenAI json_object mode —
+        no tool calling so the structured output is guaranteed."""
         instruction = (
             f"You have just ingested the {_mode_label(mode)} section from the News "
             "Agent (see INGESTED_NEWS_PAYLOAD). Produce your ingestion acknowledgment.\n\n"
@@ -151,30 +181,57 @@ class RiskChatEngine:
             "followups": [str(f) for f in data.get("followups", [])][:4],
         }
 
-    # ── Streaming interactive QA ──
+    # ── Streaming interactive QA via LangGraph ReAct ─────────────────
     async def chat(
         self,
         payload: str,
         messages: list[dict],
         user_message: str,
     ) -> AsyncIterator[str]:
-        """Stream a response. Ends with a <<FOLLOWUPS>> block the client parses."""
+        """Stream a response via the LangGraph ReAct agent.
+
+        The agent can call web_search multiple times before producing the
+        final answer. Streaming events are mapped to text tokens for the
+        frontend. Ends with a <<FOLLOWUPS>> block the client parses.
+        """
         system_content = (
             f"{self._system(payload)}\n\n{CHAT_TURN_RULES}\n\n{FOLLOWUP_RULES}"
         )
 
-        openai_messages = [{"role": "system", "content": system_content}]
+        # Convert stored conversation history to LangChain message objects.
+        lc_messages: list = [SystemMessage(content=system_content)]
         for msg in messages:
-            openai_messages.append({"role": msg["role"], "content": msg["content"]})
-        openai_messages.append({"role": "user", "content": user_message})
+            role, content = msg["role"], msg["content"]
+            if role == "user":
+                lc_messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                lc_messages.append(AIMessage(content=content))
+        lc_messages.append(HumanMessage(content=user_message))
 
-        stream = await self._client.chat.completions.create(
-            model=self._deployment,
-            messages=openai_messages,
-            stream=True,
-            max_completion_tokens=2500,
-        )
-        async for chunk in stream:
-            delta = chunk.choices[0].delta if chunk.choices else None
-            if delta and delta.content:
-                yield delta.content
+        # Stream events from the LangGraph graph.
+        async for event in self._agent.astream_events(
+            {"messages": lc_messages},
+            version="v2",
+        ):
+            kind = event["event"]
+
+            # Show a visible search indicator when the tool fires.
+            if kind == "on_tool_start" and event.get("name") == "web_search":
+                inp = event.get("data", {}).get("input", {})
+                query = inp.get("query", "") if isinstance(inp, dict) else str(inp)
+                if query:
+                    yield f"\n\n> Searching the web for: *{query}*\n\n"
+                continue
+
+            # Yield text tokens from every LLM call within the graph.
+            if kind == "on_chat_model_stream":
+                chunk = event["data"]["chunk"]
+                content = chunk.content
+                if isinstance(content, str) and content:
+                    yield content
+                elif isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            text = part.get("text", "")
+                            if text:
+                                yield text

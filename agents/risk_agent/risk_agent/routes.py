@@ -17,6 +17,7 @@ from risk_agent.chat_engine import (
     extract_critical_events,
     extract_watchlist,
 )
+from risk_agent.stat_context import fetch_stat_bundle, stat_bundle_to_context
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -86,6 +87,22 @@ async def init_session(request: Request, body: InitRequest) -> InitResponse:
             status_code=400,
             detail="mode must be 'critical_events' or 'emerging_threats'",
         )
+
+    # Append live statistical context so the LLM reasons from real numbers.
+    try:
+        stat_bundle = await fetch_stat_bundle(
+            fred_api_key=request.app.state.fred_api_key,
+            eia_api_key=request.app.state.eia_api_key,
+        )
+        payload = payload + "\n\n" + stat_bundle_to_context(stat_bundle)
+        logger.info(
+            "Stat bundle appended: brent=%s wti=%s inr=%s",
+            stat_bundle.brent_usd,
+            stat_bundle.wti_usd,
+            stat_bundle.inr_per_usd,
+        )
+    except Exception as exc:
+        logger.warning("Stat bundle fetch failed (continuing without): %s", exc)
 
     try:
         briefing = await engine.generate_briefing(payload, body.mode)
