@@ -11,6 +11,7 @@ import {
   parseFollowups,
 } from "@/lib/riskApi";
 import Markdown from "@/components/risk/Markdown";
+import StatCards, { splitStatBlocks } from "@/components/risk/StatCards";
 
 /* ─────────── types ─────────── */
 
@@ -252,10 +253,17 @@ function UserBubble({ text }: { text: string }) {
 }
 
 function AssistantBubble({ msg }: { msg: Message }) {
+  const segments = msg.content ? splitStatBlocks(msg.content) : [];
   return (
     <div className="flex justify-start">
       <div className="w-full max-w-[92%] rounded-2xl rounded-bl-sm border border-white/10 bg-white/[0.03] px-4 py-3.5">
-        {msg.content ? <Markdown text={msg.content} /> : null}
+        {segments.map((seg, i) =>
+          seg.type === "stats" ? (
+            <StatCards key={i} items={seg.items} />
+          ) : (
+            <Markdown key={i} text={seg.text} />
+          )
+        )}
         {msg.streaming && !msg.content && <Dots />}
         {msg.streaming && msg.content && (
           <span className="ml-0.5 inline-block h-3.5 w-0.5 animate-pulse bg-orange-400 align-middle" />

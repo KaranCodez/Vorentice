@@ -47,9 +47,17 @@ function renderInline(text: string, keyPrefix: string): Node[] {
   return nodes;
 }
 
+interface ListItem {
+  indent: number; // leading-space depth (tabs counted as 2 spaces)
+  ordered: boolean;
+  num: number | null; // authored number for ordered items (preserved as written)
+  text: string;
+}
+
 interface Block {
-  type: "h1" | "h2" | "h3" | "ul" | "ol" | "table" | "hr" | "quote" | "p";
+  type: "h1" | "h2" | "h3" | "list" | "table" | "hr" | "quote" | "p";
   lines?: string[];
+  items?: ListItem[];
   text?: string;
   rows?: string[][];
   align?: ("left" | "center" | "right")[];
@@ -58,6 +66,17 @@ interface Block {
 function splitRow(line: string): string[] {
   const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
   return trimmed.split("|").map((c) => c.trim());
+}
+
+const LIST_ITEM_RE = /^\s*([-*+]|\d+[.)])\s+/;
+
+function parseListItem(raw: string): ListItem {
+  const indent = (raw.match(/^(\s*)/)?.[1].replace(/\t/g, "  ").length) ?? 0;
+  const t = raw.trim();
+  const om = /^(\d+)[.)]\s+(.*)$/.exec(t);
+  if (om) return { indent, ordered: true, num: parseInt(om[1], 10), text: om[2] };
+  const um = /^[-*+]\s+(.*)$/.exec(t);
+  return { indent, ordered: false, num: null, text: um ? um[1] : t };
 }
 
 function parseBlocks(md: string): Block[] {
@@ -81,8 +100,8 @@ function parseBlocks(md: string): Block[] {
       continue;
     }
 
-    // headers
-    const h = /^(#{1,3})\s+(.*)$/.exec(t);
+    // headers — #### and deeper degrade to h3 so they never leak as raw text
+    const h = /^(#{1,6})\s+(.*)$/.exec(t);
     if (h) {
       const level = h[1].length;
       blocks.push({
@@ -122,25 +141,28 @@ function parseBlocks(md: string): Block[] {
       continue;
     }
 
-    // unordered list
-    if (/^[-*+]\s+/.test(t)) {
-      const items: string[] = [];
-      while (i < lines.length && /^[-*+]\s+/.test(lines[i].trim())) {
-        items.push(lines[i].trim().replace(/^[-*+]\s+/, ""));
-        i++;
+    // list (ordered + unordered, nesting-aware) — one block per contiguous run
+    // so authored numbering survives bullets interleaved between numbered items
+    if (LIST_ITEM_RE.test(line)) {
+      const items: ListItem[] = [];
+      while (i < lines.length) {
+        if (LIST_ITEM_RE.test(lines[i])) {
+          items.push(parseListItem(lines[i]));
+          i++;
+        } else if (lines[i].trim() === "") {
+          // allow blank lines inside a list only if more items follow
+          let j = i + 1;
+          while (j < lines.length && lines[j].trim() === "") j++;
+          if (j < lines.length && LIST_ITEM_RE.test(lines[j])) {
+            i = j;
+          } else {
+            break;
+          }
+        } else {
+          break;
+        }
       }
-      blocks.push({ type: "ul", lines: items });
-      continue;
-    }
-
-    // ordered list
-    if (/^\d+[.)]\s+/.test(t)) {
-      const items: string[] = [];
-      while (i < lines.length && /^\d+[.)]\s+/.test(lines[i].trim())) {
-        items.push(lines[i].trim().replace(/^\d+[.)]\s+/, ""));
-        i++;
-      }
-      blocks.push({ type: "ol", lines: items });
+      blocks.push({ type: "list", items });
       continue;
     }
 
@@ -149,7 +171,8 @@ function parseBlocks(md: string): Block[] {
     while (
       i < lines.length &&
       lines[i].trim() !== "" &&
-      !/^(#{1,3}\s|[-*+]\s|\d+[.)]\s|>\s?|-{3,}$|_{3,}$)/.test(lines[i].trim())
+      !LIST_ITEM_RE.test(lines[i]) &&
+      !/^(#{1,6}\s|>\s?|-{3,}$|_{3,}$)/.test(lines[i].trim())
     ) {
       para.push(lines[i].trim());
       i++;
@@ -158,6 +181,54 @@ function parseBlocks(md: string): Block[] {
   }
 
   return blocks;
+}
+
+/* Recursive nested-list renderer. Groups a flat, indent-tagged item list into
+ * top-level items + their children, renders each level as its own <ol>/<ul>,
+ * and preserves the author's numbers so numbering never resets to 1. */
+function renderList(items: ListItem[], keyPrefix: string): React.ReactNode {
+  if (items.length === 0) return null;
+  const baseIndent = Math.min(...items.map((it) => it.indent));
+
+  const groups: { item: ListItem; children: ListItem[] }[] = [];
+  let cur: { item: ListItem; children: ListItem[] } | null = null;
+  for (const it of items) {
+    if (it.indent <= baseIndent) {
+      cur = { item: it, children: [] };
+      groups.push(cur);
+    } else if (cur) {
+      cur.children.push(it);
+    }
+  }
+
+  const ordered = groups[0].item.ordered;
+
+  const body = groups.map((g, j) => {
+    const k = `${keyPrefix}-${j}`;
+    return (
+      <li key={k} className="flex flex-col gap-1.5">
+        <div className={ordered ? "flex gap-2.5" : "flex gap-2"}>
+          {ordered ? (
+            <span className="mt-px flex size-4 shrink-0 items-center justify-center rounded bg-orange-500/20 font-mono text-[10px] font-semibold text-orange-300">
+              {g.item.num ?? j + 1}
+            </span>
+          ) : (
+            <span className="mt-[7px] size-1.5 shrink-0 rounded-full bg-orange-400/80" />
+          )}
+          <span>{renderInline(g.item.text, `${k}-t`)}</span>
+        </div>
+        {g.children.length > 0 && (
+          <div className="pl-5">{renderList(g.children, `${k}-c`)}</div>
+        )}
+      </li>
+    );
+  });
+
+  return ordered ? (
+    <ol className="flex flex-col gap-1.5 pl-1">{body}</ol>
+  ) : (
+    <ul className="flex flex-col gap-1.5 pl-1">{body}</ul>
+  );
 }
 
 export default function Markdown({ text }: { text: string }) {
@@ -170,7 +241,7 @@ export default function Markdown({ text }: { text: string }) {
         switch (b.type) {
           case "h1":
             return (
-              <h1 key={key} className="mt-1 text-base font-bold text-white">
+              <h1 key={key} className="risk-block mt-1 text-base font-bold text-white">
                 {renderInline(b.text!, key)}
               </h1>
             );
@@ -178,49 +249,31 @@ export default function Markdown({ text }: { text: string }) {
             return (
               <h2
                 key={key}
-                className="mt-2 flex items-center gap-2 text-[14px] font-bold text-orange-300"
+                className="risk-block mt-2 flex items-center gap-2 text-[14px] font-bold text-orange-300"
               >
-                <span className="h-3 w-0.5 rounded bg-orange-400/70" />
+                <span className="risk-accent h-3.5 w-0.5 shrink-0 rounded" />
                 {renderInline(b.text!, key)}
               </h2>
             );
           case "h3":
             return (
-              <h3 key={key} className="mt-1 text-[13px] font-semibold text-white/95">
+              <h3 key={key} className="risk-block mt-1 text-[13px] font-semibold text-white/95">
                 {renderInline(b.text!, key)}
               </h3>
             );
           case "hr":
             return <hr key={key} className="my-1 border-white/10" />;
-          case "ul":
+          case "list":
             return (
-              <ul key={key} className="flex flex-col gap-1.5 pl-1">
-                {b.lines!.map((li, j) => (
-                  <li key={j} className="flex gap-2">
-                    <span className="mt-[7px] size-1.5 shrink-0 rounded-full bg-orange-400/80" />
-                    <span>{renderInline(li, `${key}-${j}`)}</span>
-                  </li>
-                ))}
-              </ul>
-            );
-          case "ol":
-            return (
-              <ol key={key} className="flex flex-col gap-1.5 pl-1">
-                {b.lines!.map((li, j) => (
-                  <li key={j} className="flex gap-2.5">
-                    <span className="mt-px flex size-4 shrink-0 items-center justify-center rounded bg-orange-500/20 font-mono text-[10px] font-semibold text-orange-300">
-                      {j + 1}
-                    </span>
-                    <span>{renderInline(li, `${key}-${j}`)}</span>
-                  </li>
-                ))}
-              </ol>
+              <div key={key} className="risk-block">
+                {renderList(b.items!, key)}
+              </div>
             );
           case "quote":
             return (
               <blockquote
                 key={key}
-                className="rounded-r-lg border-l-2 border-orange-400/70 bg-orange-500/[0.07] px-3 py-2 text-white/80"
+                className="risk-block rounded-r-lg border-l-2 border-orange-400/70 bg-orange-500/[0.07] px-3 py-2 text-white/80"
               >
                 {b.lines!.map((l, j) => (
                   <div key={j}>{renderInline(l, `${key}-${j}`)}</div>
@@ -229,14 +282,14 @@ export default function Markdown({ text }: { text: string }) {
             );
           case "table":
             return (
-              <div key={key} className="my-1 overflow-x-auto">
+              <div key={key} className="risk-block my-1 overflow-x-auto rounded-lg border border-white/[0.07]">
                 <table className="w-full border-collapse text-[12.5px]">
                   <thead>
                     <tr>
                       {b.rows![0].map((cell, c) => (
                         <th
                           key={c}
-                          className="border-b border-white/15 bg-white/[0.04] px-3 py-2 text-left font-semibold text-orange-200"
+                          className="border-b border-white/15 bg-white/[0.05] px-3 py-2 text-left font-semibold text-orange-200"
                           style={{ textAlign: b.align?.[c] ?? "left" }}
                         >
                           {renderInline(cell, `${key}-h${c}`)}
@@ -246,7 +299,11 @@ export default function Markdown({ text }: { text: string }) {
                   </thead>
                   <tbody>
                     {b.rows!.slice(1).map((row, r) => (
-                      <tr key={r} className="even:bg-white/[0.02]">
+                      <tr
+                        key={r}
+                        className="risk-tr risk-row even:bg-white/[0.02]"
+                        style={{ animationDelay: `${Math.min(r * 0.06, 0.5)}s` }}
+                      >
                         {row.map((cell, c) => (
                           <td
                             key={c}
@@ -264,7 +321,7 @@ export default function Markdown({ text }: { text: string }) {
             );
           default:
             return (
-              <p key={key} className="text-white/85">
+              <p key={key} className="risk-block text-white/85">
                 {renderInline(b.text!, key)}
               </p>
             );

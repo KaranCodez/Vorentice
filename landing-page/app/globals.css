@@ -106,12 +106,84 @@ body {
   animation-play-state: paused;
 }
 
+/* ————— risk agent answer animations ————— */
+
+@keyframes risk-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes risk-row-in {
+  from {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes risk-sheen {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* each top-level answer block eases in as it streams in */
+.risk-block {
+  animation: risk-rise 0.38s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+/* table rows stagger in — delay is set inline per row index */
+.risk-row {
+  animation: risk-row-in 0.32s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+/* row hover highlight for the intelligence tables */
+.risk-tr {
+  transition: background-color 0.15s ease, box-shadow 0.15s ease;
+}
+.risk-tr:hover {
+  background-color: rgba(249, 115, 22, 0.06) !important;
+}
+
+/* stat card grid stagger */
+.risk-card {
+  animation: risk-rise 0.4s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+/* animated accent bar that sweeps under section headers */
+.risk-accent {
+  background: linear-gradient(
+    90deg,
+    rgba(249, 115, 22, 0.15) 0%,
+    rgba(249, 115, 22, 0.8) 50%,
+    rgba(249, 115, 22, 0.15) 100%
+  );
+  background-size: 200% 100%;
+  animation: risk-sheen 3s linear infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .route-flow,
   .route-flow-slow,
   .pulse-ring,
   .live-dot,
-  .ticker-track {
+  .ticker-track,
+  .risk-block,
+  .risk-row,
+  .risk-card,
+  .risk-accent {
     animation: none !important;
   }
 }
