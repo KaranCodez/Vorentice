@@ -36,9 +36,9 @@ const AGENTS: AgentDef[] = [
   {
     id: "route",
     label: "Route Agent",
-    sub: "Optimal crude shipping routes",
-    href: "#",
-    active: false,
+    sub: "Dynamic network rerouting",
+    href: "/route-agent",
+    active: true,
     color: "#818cf8",
     Icon: RouteIcon,
   },
